@@ -262,6 +262,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			int depth = -1;
 			ISchedulingRule rule = null;
 			ResourceStats.Run run = null;
+			BuilderYieldEnforcer yieldEnforcer = null;
 			try {
 				//short-circuit if none of the projects this builder cares about have changed.
 				if (!needsBuild(currentBuilder, trigger)) {
@@ -299,9 +300,20 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 						currentTree = workspace.getElementTree();
 					}
 				}
+				// Make the builder give up the workspace when another operation waits for it. Only an
+				// auto-build is forced: the user did not ask for it, and the platform starts it again.
+				if (trigger == IncrementalProjectBuilder.AUTO_BUILD) {
+					yieldEnforcer = BuilderYieldEnforcer.start(message, monitor, autoBuildJob::isInterrupted);
+				}
 				//do the build
 				SafeRunner.run(getSafeRunnable(currentBuilder, trigger, args, status, monitor));
 			} finally {
+				if (yieldEnforcer != null && yieldEnforcer.finish()) {
+					// The platform stopped the builder, so it did not process all of its delta. Keep the
+					// last built state, otherwise the cleanup below records the current tree as built and
+					// the next build never sees those changes again.
+					currentBuilder.requestRememberState();
+				}
 				// Re-acquire the WS lock, then release the scheduling rule
 				if (depth >= 0) {
 					getWorkManager().endUnprotected(depth);
