@@ -66,15 +66,26 @@ public class LaunchAsHandler extends AbstractHandler implements IExecutableExten
 		String button = launchMode != null ? LegacyActionTools.removeMnemonics(launchMode.getLabel()) : mode;
 		IDialogSettings settings = DialogSettings.getOrCreateSection(DebugUIPlugin.getDefault().getDialogSettings(),
 				SETTINGS_SECTION);
-		LaunchAsDialog dialog = new LaunchAsDialog(shell, title, button, choices,
-				lastChoice(choices, settings.get(mode)));
+		// The choice for the code at the cursor is the most specific one. Else the
+		// last choice.
+		Choice initial = LaunchAsChoices.specificChoice(choices);
+		if (initial == null) {
+			initial = lastChoice(choices, settings.get(mode));
+		}
+		LaunchAsDialog dialog = new LaunchAsDialog(shell, title, button, choices, initial);
 		int code = dialog.open();
 		Choice chosen = dialog.getResult();
-		if (chosen != null && code == Window.OK) {
+		if (chosen == null || code != Window.OK && code != LaunchAsDialog.CONFIGURE_ID) {
+			return null;
+		}
+		// A provider choice is for the code at the cursor only: keep the last
+		// general choice
+		if (!chosen.key().startsWith(LaunchAsChoices.PROVIDER_KEY_PREFIX)) {
 			settings.put(mode, chosen.key());
+		}
+		if (code == Window.OK) {
 			chosen.launch().run();
-		} else if (chosen != null && code == LaunchAsDialog.CONFIGURE_ID) {
-			settings.put(mode, chosen.key());
+		} else {
 			chosen.configure().run();
 		}
 		return null;

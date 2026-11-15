@@ -38,6 +38,7 @@
    <extension-point id="launchConfigurationTabs" name="%LaunchConfigurationTabsExtension.name" schema="schema/launchConfigurationTabs.exsd"/>
    <extension-point id="detailPaneFactories" name="%DetailPaneFactoriesExtension.name" schema="schema/detailPaneFactories.exsd"/>
    <extension-point id="toggleBreakpointsTargetFactories" name="%ToggleBreakpointsTargetFactoriesExtension.name" schema="schema/toggleBreakpointsTargetFactories.exsd"/>
+   <extension-point id="launchChoiceProviders" name="%LaunchChoiceProvidersExtension.name" schema="schema/launchChoiceProviders.exsd"/>
 
 <!-- Extensions -->
    <extension

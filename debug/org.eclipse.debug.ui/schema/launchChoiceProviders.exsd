@@ -1,0 +1,125 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Schema file written by PDE -->
+<schema targetNamespace="org.eclipse.debug.ui" xmlns="http://www.w3.org/2001/XMLSchema">
+<annotation>
+      <appInfo>
+         <meta.schema plugin="org.eclipse.debug.ui" id="launchChoiceProviders" name="Launch Choice Providers"/>
+      </appInfo>
+      <documentation>
+         Gives launch choices for the code at the cursor of an editor or for the selection of a view, for example &quot;JUnit Test: CalculatorTest.adds()&quot; for the test method at the cursor. The workbench shows these choices with the launch shortcuts, for example in the &quot;Run As...&quot; dialog. A launch with a choice must have the same result as a launch with its shortcut, but for a smaller part of the code.
+&lt;p&gt;
+A provider belongs to one launch shortcut. The workbench asks the provider only when that shortcut applies to the editor or selection and supports the launch mode, and gives the provider the shortcut to launch with.
+&lt;/p&gt;
+      </documentation>
+   </annotation>
+
+   <element name="extension">
+      <annotation>
+         <appInfo>
+            <meta.element />
+         </appInfo>
+      </annotation>
+      <complexType>
+         <sequence>
+            <element ref="provider" minOccurs="1" maxOccurs="unbounded"/>
+         </sequence>
+         <attribute name="point" type="string" use="required">
+            <annotation>
+               <documentation>
+                  a fully qualified identifier of the target extension point
+               </documentation>
+            </annotation>
+         </attribute>
+         <attribute name="id" type="string">
+            <annotation>
+               <documentation>
+                  an optional identifier of the extension instance
+               </documentation>
+            </annotation>
+         </attribute>
+         <attribute name="name" type="string">
+            <annotation>
+               <documentation>
+                  an optional name of the extension instance
+               </documentation>
+               <appInfo>
+                  <meta.attribute translatable="true"/>
+               </appInfo>
+            </annotation>
+         </attribute>
+      </complexType>
+   </element>
+
+   <element name="provider">
+      <complexType>
+         <attribute name="shortcutId" type="string" use="required">
+            <annotation>
+               <documentation>
+                  The identifier of the launch shortcut (extension point &lt;code&gt;org.eclipse.debug.ui.launchShortcuts&lt;/code&gt;) of the provider.
+               </documentation>
+               <appInfo>
+                  <meta.attribute kind="identifier" basedOn="org.eclipse.debug.ui.launchShortcuts/shortcut/@id"/>
+               </appInfo>
+            </annotation>
+         </attribute>
+         <attribute name="class" type="string" use="required">
+            <annotation>
+               <documentation>
+                  A fully qualified name of a class that implements &lt;code&gt;org.eclipse.debug.ui.ILaunchChoiceProvider&lt;/code&gt;.
+               </documentation>
+               <appInfo>
+                  <meta.attribute kind="java" basedOn=":org.eclipse.debug.ui.ILaunchChoiceProvider"/>
+               </appInfo>
+            </annotation>
+         </attribute>
+      </complexType>
+   </element>
+
+   <annotation>
+      <appInfo>
+         <meta.section type="since"/>
+      </appInfo>
+      <documentation>
+         3.23
+      </documentation>
+   </annotation>
+
+   <annotation>
+      <appInfo>
+         <meta.section type="examples"/>
+      </appInfo>
+      <documentation>
+         &lt;pre&gt;
+&lt;extension point=&quot;org.eclipse.debug.ui.launchChoiceProviders&quot;&gt;
+   &lt;provider
+         shortcutId=&quot;org.eclipse.jdt.junit.junitShortcut&quot;
+         class=&quot;org.eclipse.jdt.internal.junit.launcher.TestAtCursorChoices&quot;/&gt;
+&lt;/extension&gt;
+&lt;/pre&gt;
+      </documentation>
+   </annotation>
+
+   <annotation>
+      <appInfo>
+         <meta.section type="apiInfo"/>
+      </appInfo>
+      <documentation>
+         The value of the &lt;code&gt;class&lt;/code&gt; attribute must implement &lt;code&gt;org.eclipse.debug.ui.ILaunchChoiceProvider&lt;/code&gt;.
+      </documentation>
+   </annotation>
+
+   <annotation>
+      <appInfo>
+         <meta.section type="copyright"/>
+      </appInfo>
+      <documentation>
+         Copyright (c) 2026 Sergii Zolotarov and others.&lt;br&gt;
+
+This program and the accompanying materials are made available under the terms of the Eclipse Public License 2.0 which accompanies this distribution, and is available at
+&lt;a href=&quot;https://www.eclipse.org/legal/epl-2.0&quot;&gt;https://www.eclipse.org/legal/epl-2.0&lt;/a&gt;/
+
+SPDX-License-Identifier: EPL-2.0
+      </documentation>
+   </annotation>
+
+</schema>

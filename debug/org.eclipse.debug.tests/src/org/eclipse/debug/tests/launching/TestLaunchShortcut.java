@@ -19,8 +19,11 @@ import java.util.List;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.ui.ILaunchShortcut2;
+import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.jface.viewers.ISelection;
+import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IPersistableElement;
 
 /**
  * A launch shortcut for the tests of the "Run As..." dialog. It is enabled for
@@ -29,8 +32,40 @@ import org.eclipse.ui.IEditorPart;
  */
 public class TestLaunchShortcut implements ILaunchShortcut2 {
 
-	/** An element for which the shortcut is enabled */
-	public record Target(String name) {
+	/**
+	 * An element for which the shortcut is enabled. It is also an editor input, for
+	 * the tests with an editor.
+	 */
+	public record Target(String name) implements IEditorInput {
+		@Override
+		public <T> T getAdapter(Class<T> adapter) {
+			return null;
+		}
+
+		@Override
+		public boolean exists() {
+			return false;
+		}
+
+		@Override
+		public ImageDescriptor getImageDescriptor() {
+			return null;
+		}
+
+		@Override
+		public String getName() {
+			return name;
+		}
+
+		@Override
+		public IPersistableElement getPersistable() {
+			return null;
+		}
+
+		@Override
+		public String getToolTipText() {
+			return name;
+		}
 	}
 
 	static final List<String> LAUNCHES = new ArrayList<>();

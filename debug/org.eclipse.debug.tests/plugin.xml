@@ -223,4 +223,9 @@
          </contextualLaunch>
       </shortcut>
    </extension>
+   <extension point="org.eclipse.debug.ui.launchChoiceProviders">
+      <provider
+            class="org.eclipse.debug.tests.launching.TestLaunchChoiceProvider"
+            shortcutId="org.eclipse.debug.tests.launchAsShortcut"/>
+   </extension>
 </plugin>

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -35,6 +36,7 @@ import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.widgets.Event;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.PlatformUI;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -178,25 +180,105 @@ public class LaunchAsTests {
 	}
 
 	@Test
+	public void testProviderChoiceComesFirstInAnEditor() {
+		IEditorPart editor = editor(new TestLaunchShortcut.Target("a")); //$NON-NLS-1$
+		List<Choice> choices = LaunchAsChoices.of(new StructuredSelection(editor), ILaunchManager.RUN_MODE);
+		assertEquals("Test at the cursor", choices.get(0).label()); //$NON-NLS-1$
+		assertSame(LaunchAsChoices.SEPARATOR, choices.get(1));
+		assertThat(labels(choices)).contains(SHORTCUT_LABEL);
+		assertSame(choices.get(0), LaunchAsChoices.specificChoice(choices));
+
+		choices.get(0).launch().run();
+		assertEquals(List.of("run editor Test editor"), TestLaunchShortcut.LAUNCHES); //$NON-NLS-1$
+	}
+
+	@Test
+	public void testProviderChoiceComesFirstInAView() {
+		IStructuredSelection selection = new StructuredSelection(TestLaunchChoiceProvider.SELECTION_WITH_CHOICE);
+		List<Choice> choices = LaunchAsChoices.of(selection, ILaunchManager.RUN_MODE);
+		assertEquals("Test in the selection", choices.get(0).label()); //$NON-NLS-1$
+		assertSame(LaunchAsChoices.SEPARATOR, choices.get(1));
+		assertThat(labels(choices)).contains(SHORTCUT_LABEL);
+		assertSame(choices.get(0), LaunchAsChoices.specificChoice(choices));
+
+		choices.get(0).launch().run();
+		assertEquals(List.of("run " + selection), TestLaunchShortcut.LAUNCHES); //$NON-NLS-1$
+	}
+
+	@Test
+	public void testNoProviderChoicesIfTheProviderGivesNone() {
+		List<Choice> choices = choicesForTarget(ILaunchManager.RUN_MODE);
+		assertThat(choices).doesNotContain(LaunchAsChoices.SEPARATOR);
+		assertNull(LaunchAsChoices.specificChoice(choices));
+	}
+
+	@Test
+	public void testArrowKeysSkipTheSeparator() {
+		Choice specific = new Choice("Single Test: adds", null, "s", () -> { //$NON-NLS-1$ //$NON-NLS-2$
+		});
+		Choice general = new Choice("All Tests", null, "g", () -> { //$NON-NLS-1$ //$NON-NLS-2$
+		});
+		LaunchAsDialog dialog = open(List.of(specific, LaunchAsChoices.SEPARATOR, general), specific);
+		try {
+			assertSame(specific, selected(dialog));
+			pressKey(dialog, SWT.ARROW_DOWN);
+			assertSame(general, selected(dialog));
+			pressKey(dialog, SWT.ARROW_UP);
+			assertSame(specific, selected(dialog));
+
+			// The filter hides the separator
+			dialog.getFilterText().setText("test"); //$NON-NLS-1$
+			assertEquals(2, dialog.getViewer().getTable().getItemCount());
+		} finally {
+			dialog.close();
+		}
+	}
+
+	@Test
 	public void testLongListMakesTheDialogHigher() {
 		List<Choice> many = new ArrayList<>();
 		for (int i = 0; i < 18; i++) {
 			many.add(new Choice("Choice " + i, null, "k" + i, () -> { //$NON-NLS-1$ //$NON-NLS-2$
 			}));
 		}
-		LaunchAsDialog dialog = new LaunchAsDialog(PlatformUI.getWorkbench().getWorkbenchWindows()[0].getShell(),
-				"Run As", "Run", many, null); //$NON-NLS-1$ //$NON-NLS-2$
-		dialog.setBlockOnOpen(false);
-		dialog.open();
+		LaunchAsDialog dialog = open(many, null);
 		try {
 			var table = dialog.getViewer().getTable();
 			int heightHint = ((GridData) table.getLayoutData()).heightHint;
 			// All 18 rows, or as many as fit on the monitor
 			int rows = Math.min(18, LaunchAsDialog.maxRows(table, table.getItemHeight()));
-			assertTrue(heightHint >= rows * table.getItemHeight(), () -> "height hint " + heightHint); //$NON-NLS-1$
+			assertTrue(heightHint >= rows * table.getItemHeight(), () -> "height hint " + heightHint); //$NON-NLS-1$ //$NON-NLS-1$
 		} finally {
 			dialog.close();
 		}
+	}
+
+	private static LaunchAsDialog open(List<Choice> choices, Choice initial) {
+		LaunchAsDialog dialog = new LaunchAsDialog(PlatformUI.getWorkbench().getWorkbenchWindows()[0].getShell(),
+				"Run As", "Run", choices, initial); //$NON-NLS-1$ //$NON-NLS-2$
+		dialog.setBlockOnOpen(false);
+		dialog.open();
+		return dialog;
+	}
+
+	private static void pressKey(LaunchAsDialog dialog, int keyCode) {
+		Event event = new Event();
+		event.keyCode = keyCode;
+		event.doit = true;
+		dialog.getFilterText().notifyListeners(SWT.KeyDown, event);
+	}
+
+	/** An editor with the input, only for the choices */
+	private static IEditorPart editor(TestLaunchShortcut.Target input) {
+		return (IEditorPart) Proxy.newProxyInstance(LaunchAsTests.class.getClassLoader(),
+				new Class<?>[] { IEditorPart.class }, (proxy, method, args) -> switch (method.getName()) {
+				case "getEditorInput" -> input; //$NON-NLS-1$
+				case "getTitle" -> "Test editor"; //$NON-NLS-1$ //$NON-NLS-2$
+				case "hashCode" -> System.identityHashCode(proxy); //$NON-NLS-1$
+				case "equals" -> proxy == args[0]; //$NON-NLS-1$
+				case "toString" -> "Test editor"; //$NON-NLS-1$ //$NON-NLS-2$
+				default -> null;
+				});
 	}
 
 	private static List<Choice> choicesForTarget(String mode) {
