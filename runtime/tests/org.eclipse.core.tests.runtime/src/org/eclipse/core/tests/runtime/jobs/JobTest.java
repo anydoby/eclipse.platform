@@ -31,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
@@ -833,6 +835,64 @@ public class JobTest extends AbstractJobTest {
 		} finally {
 			manager.endRule(rule);
 			thread.join();
+		}
+	}
+
+	/**
+	 * A job without a rule of its own that takes a rule with
+	 * {@code IJobManager.beginRule} blocks the
+	 * jobs and threads that wait for that rule.
+	 */
+	@Test
+	public void testIsBlockingWithRuleFromBeginRule() throws Exception {
+		final ISchedulingRule rule = new IdentityRule();
+		CountDownLatch ruleTaken = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		Job holder = Job.create("holder", monitor -> {
+			manager.beginRule(rule, null);
+			try {
+				ruleTaken.countDown();
+				release.await(30, TimeUnit.SECONDS);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			} finally {
+				manager.endRule(rule);
+			}
+		});
+		holder.setPriority(Job.BUILD);
+		TestJob waitingJob = new TestJob("waiting job", 1, 1);
+		waitingJob.setRule(rule);
+		waitingJob.setPriority(Job.LONG);
+		Thread waitingThread = new Thread(() -> {
+			manager.beginRule(rule, null);
+			manager.endRule(rule);
+		}, "testIsBlockingWithRuleFromBeginRule");
+		try {
+			holder.schedule();
+			assertTrue(ruleTaken.await(30, TimeUnit.SECONDS));
+			assertFalse(holder.isBlocking());
+
+			// a job that waits for the rule
+			waitingJob.schedule();
+			waitForState(waitingJob, Job.WAITING);
+			Thread.sleep(200);
+			assertTrue(holder.isBlocking());
+			waitingJob.cancel();
+			waitForState(waitingJob, Job.NONE);
+			assertFalse(holder.isBlocking());
+
+			// a thread that waits for the rule
+			waitingThread.start();
+			while (waitingThread.getState() != Thread.State.WAITING
+					&& waitingThread.getState() != Thread.State.TIMED_WAITING) {
+				Thread.sleep(50);
+			}
+			assertTrue(holder.isBlocking());
+		} finally {
+			release.countDown();
+			holder.join();
+			waitingThread.join(30_000);
+			waitingJob.cancel();
 		}
 	}
 
