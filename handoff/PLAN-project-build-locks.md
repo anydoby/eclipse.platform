@@ -260,3 +260,36 @@ workspace only while they run, not for the whole build.
 3. Upstream order: platform first (an issue plus a draft PR), m2e after the platform change is in a
    milestone, because m2e must also run on older platforms (the project rule is harmless there: the
    old auto-build holds the root anyway).
+
+### Answers (user, 2026-11-21)
+
+1. Yes, an API change in `org.eclipse.core.jobs` is fine. In the end no new API was needed:
+   `Job.isBlocking()` now also sees the rules that the job's thread took with `beginRule`. This
+   matches its Javadoc, so it is a behavior fix (micro version bump to 3.15.1000).
+2. First something that works and that can be installed on the work Eclipse (one workspace with all
+   projects; touching a properties file in a Java project makes the Perl builder of a big monolith
+   freeze everything). JDT discussion later.
+3. The upstream order is fine.
+
+## 4. Status (2026-11-21)
+
+Done on this branch:
+
+- Phase 0: `BuilderYieldEnforcer` reverted.
+- Phase 1 in `org.eclipse.core.resources`: the auto-build has no job rule; root only for PRE_BUILD
+  and POST_BUILD (`AutoBuildJob.buildRelaxed`); `prepareOperation` interrupts only on a conflict with
+  the rule that the auto-build holds now (`BuildManager.getAutoBuildInterruptRule`); delta trees are
+  kept on each `InternalBuilder`, because builds can now overlap; kill switch
+  `-Dorg.eclipse.core.resources.relaxedAutoBuild=false`.
+- Not in the plan, for the work case: `-Dorg.eclipse.core.resources.projectRuleBuilders=<ids>` gives
+  the listed builders their project rule in place of the root. Without it a builder that keeps the
+  default `getRule()` (the Perl builder, most likely) still locks everything while it runs.
+- Tests: `RelaxedAutoBuildTest` (5 cases), `JobTest.testIsBlockingWithRuleFromBeginRule`.
+- Test build for Eclipse 4.41: branch `build-locks-4.41`, folder `build-locks-test/` (patch script,
+  README, classes).
+
+Known gaps:
+
+- Two overlapping builds still share `builtProjects`, `rebuildRequested` and `projectsToRebuild`
+  in `BuildManager`. The deltas are safe now; the rebuild requests of one build can affect the other.
+- A builder in `projectRuleBuilders` that writes outside its project fails with a rule error.
