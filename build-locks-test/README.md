@@ -18,8 +18,11 @@ Do not merge. This folder is only for a test on Eclipse 4.41.
 - A save that waits for the running builder tells the build to stop
   (`isInterrupted()`), as before.
 
-The patch changes four bundles: org.eclipse.core.resources,
-org.eclipse.core.jobs, org.eclipse.debug.ui and org.eclipse.ui.ide.
+- The build before a launch does not lock the whole workspace.
+
+The patch changes five bundles: org.eclipse.core.resources,
+org.eclipse.core.jobs, org.eclipse.debug.core, org.eclipse.debug.ui and
+org.eclipse.ui.ide.
 
 ## Install
 
