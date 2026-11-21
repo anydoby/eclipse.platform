@@ -436,6 +436,11 @@ public abstract class Job extends InternalJob {
 	 * Returns whether this job is blocking a higher priority non-system job from
 	 * starting due to a conflicting scheduling rule.  Returns <code>false</code>
 	 * if this job is not running, or is not blocking a higher priority non-system job.
+	 * <p>
+	 * The rules that count are the rule of this job and the rules
+	 * that the thread of this job holds through
+	 * {@link IJobManager#beginRule(ISchedulingRule, IProgressMonitor)}.
+	 * </p>
 	 *
 	 * @return <code>true</code> if this job is blocking a higher priority non-system
 	 * job, and <code>false</code> otherwise.

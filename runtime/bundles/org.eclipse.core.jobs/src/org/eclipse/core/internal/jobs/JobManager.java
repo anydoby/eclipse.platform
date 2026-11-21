@@ -938,36 +938,64 @@ public class JobManager implements IJobManager, DebugOptionsListener {
 	 * job.
 	 */
 	protected boolean isBlocking(InternalJob runningJob) {
-		synchronized (lock) {
-			// if this job isn't running, it can't be blocking anyone
-			if (runningJob.getState() != Job.RUNNING) {
-				return false;
-			}
-			// if any job is queued behind this one, it is blocked by it
-			InternalJob previous = runningJob.previous();
-			while (previous != null) {
-				// ignore jobs of lower priority (higher priority value means lower priority)
-				if (previous.getPriority() < runningJob.getPriority()) {
-					if (!previous.isSystem()) {
-						return true;
-					}
-					// implicit jobs should interrupt unless they act on behalf of system jobs
-					if (previous instanceof ThreadJob && ((ThreadJob) previous).shouldInterrupt()) {
+		// lock order: implicitJobs before lock
+		synchronized (implicitJobs) {
+			synchronized (lock) {
+				// if this job isn't running, it can't be blocking anyone
+				if (runningJob.getState() != Job.RUNNING) {
+					return false;
+				}
+				int priority = runningJob.getPriority();
+				if (isBlocking(runningJob, priority)) {
+					return true;
+				}
+				// A job without a rule of its own can hold a rule that its thread
+				// took with IJobManager#beginRule. An implicit job holds that rule,
+				// and it blocks other jobs on behalf of this job.
+				Thread thread = runningJob.getThread();
+				if (thread != null && !(runningJob instanceof ThreadJob)) {
+					ThreadJob threadJob = implicitJobs.getThreadJob(thread);
+					if (threadJob != null && threadJob.getState() == Job.RUNNING && isBlocking(threadJob, priority)) {
 						return true;
 					}
 				}
-				previous = previous.previous();
+				// none found
+				return false;
 			}
-			// consider threads waiting on IJobManager#beginRule
-			for (InternalJob waitingThreadJob : waitingThreadJobs) {
-				ThreadJob waitingJob = (ThreadJob) waitingThreadJob;
-				if (runningJob.isConflicting(waitingJob) && waitingJob.shouldInterrupt()) {
+		}
+	}
+
+	/**
+	 * Returns whether a job waits for the rule that the given job holds.
+	 *
+	 * @param holder   a running job
+	 * @param priority only jobs with a higher priority than this count
+	 * @GuardedBy("lock")
+	 */
+	private boolean isBlocking(InternalJob holder, int priority) {
+		// if any job is queued behind this one, it is blocked by it
+		InternalJob previous = holder.previous();
+		while (previous != null) {
+			// ignore jobs of lower priority (higher priority value means lower priority)
+			if (previous.getPriority() < priority) {
+				if (!previous.isSystem()) {
+					return true;
+				}
+				// implicit jobs should interrupt unless they act on behalf of system jobs
+				if (previous instanceof ThreadJob && ((ThreadJob) previous).shouldInterrupt()) {
 					return true;
 				}
 			}
-			// none found
-			return false;
+			previous = previous.previous();
 		}
+		// consider threads waiting on IJobManager#beginRule
+		for (InternalJob waitingThreadJob : waitingThreadJobs) {
+			ThreadJob waitingJob = (ThreadJob) waitingThreadJob;
+			if (holder.isConflicting(waitingJob) && waitingJob.shouldInterrupt()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@Override
