@@ -60,6 +60,13 @@ public abstract class TestBuilder extends IncrementalProjectBuilder {
 		public IResourceDelta getDelta(IProject project) {
 			return builder.getDelta(project);
 		}
+
+		/**
+		 * Returns whether an operation asked the running build to stop.
+		 */
+		public boolean isInterrupted() {
+			return builder.isInterrupted();
+		}
 	}
 
 	/**

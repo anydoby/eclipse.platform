@@ -162,10 +162,33 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	final AutoBuildJob autoBuildJob;
 	private final Set<IProject> builtProjects = Collections.synchronizedSet(new HashSet<>());
 
-	//the following four fields only apply for the lifetime of a single builder invocation.
+	//the builders that run now
 	protected final Set<InternalBuilder> currentBuilders;
-	private ElementTree currentLastBuiltTree;
-	private ElementTree currentTree;
+
+	/**
+	 * System property: {@code false} makes the auto-build hold the workspace root
+	 * for the whole build, as before.
+	 */
+	static final String PROP_RELAXED_AUTO_BUILD = "org.eclipse.core.resources.relaxedAutoBuild"; //$NON-NLS-1$
+
+	/**
+	 * System property: a comma-separated list of builder IDs. A builder in this list
+	 * that asks for the workspace root gets the rule of its project in its place.
+	 */
+	static final String PROP_PROJECT_RULE_BUILDERS = "org.eclipse.core.resources.projectRuleBuilders"; //$NON-NLS-1$
+
+	/**
+	 * {@code true} while the auto-build runs its builders without a rule of its own.
+	 * Each builder then holds only its own rule.
+	 */
+	private volatile boolean relaxedAutoBuild;
+
+	/**
+	 * The rule of the builder that the auto-build runs now, while
+	 * {@link #relaxedAutoBuild} is {@code true}. {@code null} between builders and
+	 * for builders without a rule.
+	 */
+	private volatile ISchedulingRule relaxedAutoBuildRule;
 
 	/**
 	 * Caches the IResourceDelta for a pair of trees
@@ -233,13 +256,13 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			currentBuilder.clearLastBuiltStateRequests();
 			// Figure out want kind of build is needed
 			boolean clean = trigger == IncrementalProjectBuilder.CLEAN_BUILD;
-			currentLastBuiltTree = currentBuilder.getLastBuiltTree();
+			ElementTree lastBuiltTree = currentBuilder.getLastBuiltTree();
 
 			// Does the build command respond to this trigger?
 			boolean isBuilding = builder.getCommand().isBuilding(trigger);
 
 			// If no tree is available we have to do a full build
-			if (!clean && currentLastBuiltTree == null) {
+			if (!clean && lastBuiltTree == null) {
 				// Bug 306746 - Don't promote build to FULL_BUILD if builder doesn't AUTO_BUILD
 				if (trigger == IncrementalProjectBuilder.AUTO_BUILD && !isBuilding) {
 					return;
@@ -258,10 +281,12 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			}
 
 			// For incremental builds, grab a pointer to the current state before computing the delta
-			currentTree = ((trigger == IncrementalProjectBuilder.FULL_BUILD) || clean) ? null : workspace.getElementTree();
+			ElementTree currentTree = ((trigger == IncrementalProjectBuilder.FULL_BUILD) || clean) ? null : workspace.getElementTree();
+			currentBuilder.setDeltaTrees(lastBuiltTree, currentTree);
 			int depth = -1;
 			ISchedulingRule rule = null;
 			ResourceStats.Run run = null;
+			boolean relaxedAutoBuildBuilder = false;
 			try {
 				//short-circuit if none of the projects this builder cares about have changed.
 				if (!needsBuild(currentBuilder, trigger)) {
@@ -270,7 +295,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 					monitor.done();
 					return;
 				}
-				rule = builder.getRule(trigger, args);
+				rule = getEffectiveRule(currentBuilder, builder.getRule(trigger, args));
 				String name = currentBuilder.getLabel();
 				String message;
 				if (name != null) {
@@ -286,6 +311,12 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 				}
 				//release workspace lock while calling builders
 				depth = getWorkManager().beginUnprotected();
+				// Tell operations which rule the auto-build holds, before it holds it, so
+				// that an operation that will wait for it interrupts the build
+				relaxedAutoBuildBuilder = relaxedAutoBuild && Job.getJobManager().currentJob() == autoBuildJob;
+				if (relaxedAutoBuildBuilder) {
+					relaxedAutoBuildRule = rule;
+				}
 				// Acquire the rule required for running this builder
 				if (rule != null) {
 					try {
@@ -297,6 +328,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 					// correct currentTree so delta contains concurrent changes made in areas guarded by the scheduling rule
 					if (currentTree != null) {
 						currentTree = workspace.getElementTree();
+						currentBuilder.setDeltaTrees(lastBuiltTree, currentTree);
 					}
 				}
 				//do the build
@@ -305,6 +337,9 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 				// Re-acquire the WS lock, then release the scheduling rule
 				if (depth >= 0) {
 					getWorkManager().endUnprotected(depth);
+				}
+				if (relaxedAutoBuildBuilder) {
+					relaxedAutoBuildRule = null;
 				}
 				if (rule != null) {
 					try {
@@ -333,8 +368,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			}
 		} finally {
 			currentBuilders.remove(currentBuilder);
-			currentTree = null;
-			currentLastBuiltTree = null;
+			currentBuilder.setDeltaTrees(null, null);
 		}
 	}
 
@@ -1051,18 +1085,18 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	 *
 	 * @param project the project to get a delta for
 	 */
-	IResourceDelta getDelta(IProject project) {
+	IResourceDelta getDelta(InternalBuilder builder, IProject project) {
 		try {
 			lock.acquire();
+			ElementTree currentTree = builder.getDeltaNewTree();
 			if (currentTree == null) {
 				if (Policy.DEBUG_BUILD_FAILURE) {
 					Policy.debug("Build: no tree for delta " + debugBuilder() + " [" + debugProject() + "]"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 				}
 				return null;
 			}
-			Set<InternalBuilder> interestedBuilders = getInterestedBuilders(project);
 			//check if this builder has indicated it cares about this project
-			if (interestedBuilders.isEmpty()) {
+			if (!isInterestingProject(builder, project)) {
 				if (Policy.DEBUG_BUILD_FAILURE) {
 					Policy.debug("Build: project not interesting for current builders " + debugBuilder() + " [" + debugProject() + "] " + project.getFullPath()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 				}
@@ -1070,7 +1104,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			}
 
 			//now check against the cache
-			return getDeltaCached(project, currentLastBuiltTree, currentTree);
+			return getDeltaCached(project, builder.getDeltaOldTree(), currentTree);
 		} finally {
 			lock.release();
 		}
@@ -1359,6 +1393,56 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	}
 
 	/**
+	 * Returns the rule that an operation must not conflict with if it does not want
+	 * to interrupt the auto-build, or {@code null} if no operation interrupts it now.
+	 *
+	 * @param buildRule the rule of a build that holds the workspace for all of its
+	 *                  run
+	 */
+	public ISchedulingRule getAutoBuildInterruptRule(ISchedulingRule buildRule) {
+		if (relaxedAutoBuild) {
+			return relaxedAutoBuildRule;
+		}
+		return buildRule;
+	}
+
+	/**
+	 * Marks the start or the end of the part of a relaxed auto-build in which only
+	 * the builders hold rules.
+	 */
+	void setRelaxedAutoBuild(boolean relaxed) {
+		relaxedAutoBuild = relaxed;
+		relaxedAutoBuildRule = null;
+	}
+
+	/**
+	 * Returns whether the auto-build runs each builder with its own rule, and holds
+	 * the workspace root only for the pre-build and post-build notifications.
+	 */
+	static boolean isRelaxedAutoBuildEnabled() {
+		return !"false".equalsIgnoreCase(System.getProperty(PROP_RELAXED_AUTO_BUILD)); //$NON-NLS-1$
+	}
+
+	/**
+	 * Returns the rule that the builder runs with. A builder that the user lists in
+	 * {@link #PROP_PROJECT_RULE_BUILDERS} gets its project in place of the
+	 * workspace root.
+	 */
+	private ISchedulingRule getEffectiveRule(InternalBuilder builder, ISchedulingRule rule) {
+		String builderIds = System.getProperty(PROP_PROJECT_RULE_BUILDERS);
+		if (rule == null || builderIds == null || builderIds.isBlank() || !rule.contains(workspace.getRoot())) {
+			return rule;
+		}
+		String builderId = builder.getCommand().getBuilderName();
+		for (String id : builderIds.split(",")) { //$NON-NLS-1$
+			if (id.trim().equals(builderId)) {
+				return builder.getProject();
+			}
+		}
+		return rule;
+	}
+
+	/**
 	 * Returns whether an autobuild is pending (requested but not yet completed).
 	 */
 	public boolean isAutobuildBuildPending() {
@@ -1383,16 +1467,6 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 		return false;
 	}
 
-	private Set<InternalBuilder> getInterestedBuilders(final IProject project) {
-		final Set<InternalBuilder> res = new HashSet<>();
-		for (final InternalBuilder builder : this.currentBuilders) {
-			if (isInterestingProject(builder, project)) {
-				res.add(builder);
-			}
-		}
-		return res;
-	}
-
 	/**
 	 * Returns true if the given builder needs to be invoked, and false
 	 * otherwise.
@@ -1412,10 +1486,8 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			case IncrementalProjectBuilder.FULL_BUILD :
 				return true;
 			case IncrementalProjectBuilder.INCREMENTAL_BUILD :
-				for (InternalBuilder currentBuilder : this.currentBuilders) {
-					if (currentBuilder.callOnEmptyDelta()) {
-						return true;
-					}
+				if (builder.callOnEmptyDelta()) {
+					return true;
 				}
 				//fall through and check if there is a delta
 		}
@@ -1441,7 +1513,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	}
 
 	private boolean hasDelta(InternalBuilder builder, IProject project, ElementTree oldTree, ElementTree newTree) {
-		IResourceDelta delta = getDeltaCached(project, currentLastBuiltTree, currentTree);
+		IResourceDelta delta = getDeltaCached(project, oldTree, newTree);
 		if (delta == null) {
 			return false;
 		}
@@ -1684,7 +1756,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 					try {
 						IncrementalProjectBuilder builder = getBuilder(buildConfiguration, command, i, status, context);
 						if (builder != null) {
-							ISchedulingRule builderRule = builder.getRule(trigger, allArgs);
+							ISchedulingRule builderRule = getEffectiveRule(builder, builder.getRule(trigger, allArgs));
 							if (builderRule != null) {
 								rules.add(builderRule);
 							} else {
@@ -1717,7 +1789,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			try {
 				IncrementalProjectBuilder builder = getBuilder(buildConfiguration, command, -1, status);
 				if (builder != null) {
-					return builder.getRule(trigger, allArgs);
+					return getEffectiveRule(builder, builder.getRule(trigger, allArgs));
 				}
 
 			} catch (CoreException e) {

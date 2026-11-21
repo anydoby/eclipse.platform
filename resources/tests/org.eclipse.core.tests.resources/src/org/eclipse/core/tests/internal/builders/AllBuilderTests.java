@@ -34,6 +34,7 @@ import org.junit.platform.suite.api.Suite;
 		MultiProjectBuildTest.class, //
 		ParallelBuildChainTest.class, //
 		RebuildTest.class, //
+		RelaxedAutoBuildTest.class, //
 		RelaxedSchedRuleBuilderTest.class, //
 })
 public class AllBuilderTests {

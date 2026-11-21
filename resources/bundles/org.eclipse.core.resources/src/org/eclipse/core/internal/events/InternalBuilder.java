@@ -44,6 +44,13 @@ public abstract class InternalBuilder {
 	private String natureId;
 	private ElementTree oldState;
 	/**
+	 * The two trees that the delta of the running build of this builder compares.
+	 * They are set only while this builder runs. Builds of other builders can run
+	 * at the same time, so they cannot be fields of the build manager.
+	 */
+	private ElementTree deltaOldTree;
+	private ElementTree deltaNewTree;
+	/**
 	 * The symbolic name of the plugin that defines this builder
 	 */
 	private String pluginId;
@@ -113,7 +120,7 @@ public abstract class InternalBuilder {
 	 * @see IncrementalProjectBuilder#rememberLastBuiltState()
 	 */
 	protected IResourceDelta getDelta(IProject aProject) {
-		return buildManager.getDelta(aProject);
+		return buildManager.getDelta(this, aProject);
 	}
 
 	/**
@@ -129,6 +136,19 @@ public abstract class InternalBuilder {
 
 	final String getLabel() {
 		return label;
+	}
+
+	final void setDeltaTrees(ElementTree oldTree, ElementTree newTree) {
+		deltaOldTree = oldTree;
+		deltaNewTree = newTree;
+	}
+
+	final ElementTree getDeltaOldTree() {
+		return deltaOldTree;
+	}
+
+	final ElementTree getDeltaNewTree() {
+		return deltaNewTree;
 	}
 
 	final ElementTree getLastBuiltTree() {
