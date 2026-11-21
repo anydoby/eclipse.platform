@@ -51,6 +51,11 @@ public abstract class InternalBuilder {
 	private ElementTree deltaOldTree;
 	private ElementTree deltaNewTree;
 	/**
+	 * Set when the running build of this builder failed because it asked for a
+	 * scheduling rule outside the rule of the build.
+	 */
+	private volatile boolean ruleConflict;
+	/**
 	 * The symbolic name of the plugin that defines this builder
 	 */
 	private String pluginId;
@@ -136,6 +141,14 @@ public abstract class InternalBuilder {
 
 	final String getLabel() {
 		return label;
+	}
+
+	final void setRuleConflict(boolean conflict) {
+		ruleConflict = conflict;
+	}
+
+	final boolean hadRuleConflict() {
+		return ruleConflict;
 	}
 
 	final void setDeltaTrees(ElementTree oldTree, ElementTree newTree) {
