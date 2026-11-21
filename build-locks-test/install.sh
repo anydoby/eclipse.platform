@@ -18,7 +18,7 @@ CLASSES=$(mktemp -d)
 trap 'rm -rf "$CLASSES"' EXIT
 unzip -q "$HERE/classes.zip" -d "$CLASSES"
 
-for b in org.eclipse.core.resources:3.24.100 org.eclipse.core.jobs:3.15.900; do
+for b in org.eclipse.core.resources:3.24.100 org.eclipse.core.jobs:3.15.900 org.eclipse.debug.ui:3.22.0 org.eclipse.ui.ide:3.23.200; do
   id=${b%%:*}; ver=${b##*:}
   # the jar that Eclipse really uses
   rel=$(grep "^$id,$ver\." "$INFO" | cut -d, -f3 || true)
