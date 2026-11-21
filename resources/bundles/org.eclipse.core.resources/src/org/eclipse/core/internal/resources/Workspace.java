@@ -522,7 +522,16 @@ public class Workspace extends PlatformObject implements IWorkspace, ICoreConsta
 		// PRE + POST_BUILD, and the build itself are allowed to modify resources, so require the current thread's scheduling rule
 		// to either contain the WR or be null. Therefore, if not null, ensure it contains the WR rule...
 		final boolean noEnclosingRule = Job.getJobManager().currentRule() == null;
-		boolean relaxed = noEnclosingRule && requestedConfigs.length > 0 && allRelaxed(requestedConfigs, trigger);
+		// With relaxed build rules each builder holds only its own rule, also when
+		// another builder of the build needs the workspace root.
+		final boolean relaxedBuildRules = noEnclosingRule && BuildManager.isRelaxedBuildEnabled();
+		if (relaxedBuildRules && !hasBuildWork(requestedConfigs, trigger, buildReferences)) {
+			// Nothing to build: do not take the workspace root for the notifications,
+			// so that a build of unchanged projects does not wait for other builds.
+			return;
+		}
+		boolean relaxed = relaxedBuildRules
+				|| (noEnclosingRule && requestedConfigs.length > 0 && allRelaxed(requestedConfigs, trigger));
 		final ISchedulingRule notificationRule = getRuleFactory().buildRule();
 		ISchedulingRule currentRule = null;
 		boolean buildParallel = noEnclosingRule && getDescription().getMaxConcurrentBuilds() > 1 && getDescription().getBuildOrder() == null;
@@ -603,8 +612,12 @@ public class Workspace extends PlatformObject implements IWorkspace, ICoreConsta
 
 				buildParallel &= (buildGraph != null && buildGraph.vertexList.size() > 1);
 				if (buildParallel) {
-					relaxed = noEnclosingRule && allRelaxed(allConfigs, trigger);
-					buildParallel &= relaxed;
+					// a parallel build needs a relaxed rule for every configuration
+					boolean allConfigsRelaxed = noEnclosingRule && allRelaxed(allConfigs, trigger);
+					buildParallel &= allConfigsRelaxed;
+					if (!relaxed) {
+						relaxed = allConfigsRelaxed;
+					}
 				}
 				if (buildParallel) {
 					endOperation(currentRule, false); // operation needs to be ended to allow concurrent edits
@@ -639,6 +652,38 @@ public class Workspace extends PlatformObject implements IWorkspace, ICoreConsta
 			}
 			// Rule will be the build-rule from the POST_BUILD refresh
 			endOperation(currentRule, false);
+		}
+	}
+
+	/**
+	 * Returns whether an incremental build of the given configurations would run
+	 * at least one builder. Other triggers always have work.
+	 */
+	boolean hasBuildWork(IBuildConfiguration[] requestedConfigs, int trigger, boolean buildReferences) throws CoreException {
+		if (trigger != IncrementalProjectBuilder.INCREMENTAL_BUILD) {
+			return true;
+		}
+		IBuildConfiguration[] configs;
+		if (requestedConfigs.length == 0) {
+			configs = null; // computed under the workspace lock
+		} else {
+			Set<IBuildConfiguration> all = new LinkedHashSet<>();
+			for (IBuildConfiguration config : requestedConfigs) {
+				if (config.getProject().isAccessible() && config.getProject().hasBuildConfig(config.getName())) {
+					all.add(config);
+					if (buildReferences) {
+						recursivelyAddBuildConfigs(all, config);
+					}
+				}
+			}
+			configs = all.toArray(IBuildConfiguration[]::new);
+		}
+		prepareOperation(null, null);
+		try {
+			beginOperation(false);
+			return getBuildManager().hasBuildWork(configs == null ? getBuildOrder() : configs, trigger);
+		} finally {
+			endOperation(null, false);
 		}
 	}
 

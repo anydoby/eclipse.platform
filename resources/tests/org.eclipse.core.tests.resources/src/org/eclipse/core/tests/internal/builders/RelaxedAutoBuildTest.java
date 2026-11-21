@@ -31,6 +31,7 @@ import org.eclipse.core.resources.IWorkspaceDescription;
 import org.eclipse.core.resources.IncrementalProjectBuilder;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.ICoreRunnable;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.jobs.ISchedulingRule;
 import org.eclipse.core.runtime.jobs.Job;
@@ -42,8 +43,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Tests that the auto-build holds only the rule of the builder that runs, so
- * that operations that do not conflict with it do not wait for the build.
+ * Tests that builds hold only the rule of the builder that runs, so that
+ * operations that do not conflict with it do not wait for the build.
  */
 @ExtendWith(WorkspaceResetExtension.class)
 public class RelaxedAutoBuildTest {
@@ -174,6 +175,75 @@ public class RelaxedAutoBuildTest {
 		CountDownLatch done = createFileInOtherThread(projectB.getFile("b.txt"), failure);
 		assertThat(done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).as("file in B created while A builds").isTrue();
 		assertThat(failure.get()).isNull();
+	}
+
+	/** Starts a manual build of project A in a job without a rule, like a launch or the Clean dialog. */
+	private Job startManualBuild() throws Exception {
+		Job job = Job.create("build A", monitor -> {
+			projectA.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, monitor);
+		});
+		job.schedule();
+		assertThat(builderStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).as("builder started").isTrue();
+		return job;
+	}
+
+	/** Runs the action in another thread and returns the latch that ends when it is done. */
+	private CountDownLatch runInOtherThread(String name, ICoreRunnable action, AtomicReference<Throwable> failure) {
+		CountDownLatch done = new CountDownLatch(1);
+		Thread thread = new Thread(() -> {
+			try {
+				action.run(null);
+			} catch (Throwable e) {
+				failure.set(e);
+			} finally {
+				done.countDown();
+			}
+		}, name);
+		thread.start();
+		return done;
+	}
+
+	@Test
+	public void testManualBuildRunsBuilderWithItsOwnRule() throws Exception {
+		AtomicReference<ISchedulingRule> ruleInBuild = new AtomicReference<>();
+		EmptyDeltaBuilder.getInstance().setRuleCallback(blockingBuilder(projectA, ruleInBuild));
+		Job job = startManualBuild();
+		assertThat(ruleInBuild.get()).isEqualTo(projectA);
+		releaseBuilder.countDown();
+		job.join();
+	}
+
+	@Test
+	public void testManualBuildDoesNotBlockOtherProject() throws Exception {
+		EmptyDeltaBuilder.getInstance().setRuleCallback(blockingBuilder(projectA, new AtomicReference<>()));
+		Job job = startManualBuild();
+
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		CountDownLatch created = createFileInOtherThread(projectB.getFile("b.txt"), failure);
+		assertThat(created.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).as("file in B created while A builds").isTrue();
+		// B has nothing to build, so its build must not wait for the build of A
+		CountDownLatch built = runInOtherThread("build B",
+				monitor -> projectB.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, monitor), failure);
+		assertThat(built.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).as("build of B ended while A builds").isTrue();
+		assertThat(failure.get()).isNull();
+		assertThat(releaseBuilder.getCount()).as("builder still runs").isEqualTo(1);
+		releaseBuilder.countDown();
+		job.join();
+	}
+
+	@Test
+	public void testManualBuildWithRootBuilderBlocksOtherProject() throws Exception {
+		EmptyDeltaBuilder.getInstance()
+				.setRuleCallback(blockingBuilder(getWorkspace().getRoot(), new AtomicReference<>()));
+		Job job = startManualBuild();
+
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		CountDownLatch done = createFileInOtherThread(projectB.getFile("b.txt"), failure);
+		assertThat(done.await(500, TimeUnit.MILLISECONDS)).as("file in B waits for a root builder").isFalse();
+		releaseBuilder.countDown();
+		assertThat(done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).as("file in B created after the build").isTrue();
+		assertThat(failure.get()).isNull();
+		job.join();
 	}
 
 	@Test

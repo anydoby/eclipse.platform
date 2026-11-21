@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.TreeSet;
 import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.filesystem.IFileStore;
+import org.eclipse.core.internal.events.BuildManager;
 import org.eclipse.core.internal.events.LifecycleEvent;
 import org.eclipse.core.internal.preferences.EclipsePreferences;
 import org.eclipse.core.internal.utils.FileUtil;
@@ -592,7 +593,17 @@ public class Project extends Container implements IProject {
 
 				final ISchedulingRule projectBuildRule = workspace.getBuildManager().getRule(config, trigger,
 						builderName, args);
-				final boolean relaxed = Job.getJobManager().currentRule() == null && workspace.isRelaxedRule(projectBuildRule);
+				final boolean noEnclosingRule = Job.getJobManager().currentRule() == null;
+				final boolean relaxed = noEnclosingRule && workspace.isRelaxedRule(projectBuildRule);
+				// With relaxed build rules the build holds no rule of its own: each builder
+				// takes its own rule while it runs.
+				final boolean relaxedBuildRules = noEnclosingRule && BuildManager.isRelaxedBuildEnabled();
+				if (relaxedBuildRules && builderName == null
+						&& !workspace.hasBuildWork(new IBuildConfiguration[] { config }, trigger, false)) {
+					// nothing to build: do not wait for the rules of other builds
+					return;
+				}
+				final ISchedulingRule buildRule = relaxedBuildRules ? null : projectBuildRule;
 
 				// PRE + POST_BUILD, and the build itself are allowed to modify resources, so require the current thread's scheduling rule
 				// to either contain the WR or be null. Therefore, if not null, ensure it contains the WR rule...
@@ -611,7 +622,7 @@ public class Project extends Container implements IProject {
 					}
 					try {
 						IStatus result;
-						workspace.prepareOperation(projectBuildRule, innerMonitor);
+						workspace.prepareOperation(buildRule, innerMonitor);
 						// don't open the tree eagerly because it will be wasted if no build occurs
 						workspace.beginOperation(false);
 						result = workspace.getBuildManager().build(config, trigger, builderName, args,
@@ -620,7 +631,7 @@ public class Project extends Container implements IProject {
 							throw new ResourceException(result);
 						}
 					} finally {
-						workspace.endOperation(projectBuildRule, false);
+						workspace.endOperation(buildRule, false);
 						try {
 							workspace.prepareOperation(notificationsRule, innerMonitor);
 							// don't open the tree eagerly because it will be wasted if no change occurs
