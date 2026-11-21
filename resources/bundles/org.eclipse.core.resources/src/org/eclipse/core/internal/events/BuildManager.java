@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -194,6 +195,15 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	private volatile ISchedulingRule relaxedAutoBuildRule;
 
 	/**
+	 * IDs of builders listed in {@link #PROP_PROJECT_RULE_BUILDERS} that failed
+	 * with the project rule. They get their own rule for the rest of the session.
+	 */
+	private final Set<String> projectRuleFailures = ConcurrentHashMap.newKeySet();
+
+	/** The value of {@link #PROP_PROJECT_RULE_BUILDERS} that {@link #projectRuleFailures} belongs to. */
+	private volatile String projectRuleBuildersSeen;
+
+	/**
 	 * Caches the IResourceDelta for a pair of trees
 	 */
 	final private DeltaCache<IResourceDelta> deltaCache = new DeltaCache<>();
@@ -290,6 +300,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			ISchedulingRule rule = null;
 			ResourceStats.Run run = null;
 			boolean relaxedAutoBuildBuilder = false;
+			boolean ruleOverridden = false;
 			try {
 				//short-circuit if none of the projects this builder cares about have changed.
 				if (!needsBuild(currentBuilder, trigger)) {
@@ -298,7 +309,10 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 					monitor.done();
 					return;
 				}
-				rule = getEffectiveRule(currentBuilder, builder.getRule(trigger, args));
+				ISchedulingRule builderRule = builder.getRule(trigger, args);
+				rule = getEffectiveRule(currentBuilder, builderRule);
+				ruleOverridden = rule != builderRule;
+				currentBuilder.setRuleConflict(false);
 				String name = currentBuilder.getLabel();
 				String message;
 				if (name != null) {
@@ -343,6 +357,9 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 				}
 				if (relaxedAutoBuildBuilder) {
 					relaxedAutoBuildRule = null;
+				}
+				if (ruleOverridden && currentBuilder.hadRuleConflict()) {
+					handleProjectRuleFailure(currentBuilder);
 				}
 				if (rule != null) {
 					try {
@@ -1157,6 +1174,9 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 					currentBuilder.forgetLastBuiltState();
 					throw (OperationCanceledException) e;
 				}
+				if (isRuleConflict(e)) {
+					currentBuilder.setRuleConflict(true);
+				}
 				//ResourceStats.buildException(e);
 				// don't log the exception....it is already being logged in SafeRunner#run
 
@@ -1479,12 +1499,51 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	}
 
 	/**
+	 * Returns whether the exception, or one of its causes, says that code asked for a
+	 * scheduling rule that the rule of the running build does not contain.
+	 */
+	private static boolean isRuleConflict(Throwable e) {
+		for (Throwable t = e; t != null; t = t.getCause()) {
+			if (t instanceof IllegalArgumentException && t.getMessage() != null
+					&& t.getMessage().contains("does not match outer scope rule")) { //$NON-NLS-1$
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * A builder from {@link #PROP_PROJECT_RULE_BUILDERS} failed because it needs a
+	 * larger rule than its project. From now on it gets its own rule. Its next
+	 * build is a full build, so that no change is lost, and a new auto-build starts.
+	 */
+	private void handleProjectRuleFailure(InternalBuilder builder) {
+		String builderId = builder.getCommand().getBuilderName();
+		if (projectRuleFailures.add(builderId)) {
+			String message = NLS.bind(
+					"Builder {0} needs a larger scheduling rule than its project. It is removed from {1} for this session.", //$NON-NLS-1$
+					builderId, PROP_PROJECT_RULE_BUILDERS);
+			Policy.log(IStatus.WARNING, message, null);
+		}
+		builder.forgetLastBuiltState();
+		autoBuildJob.build(true);
+	}
+
+	/**
 	 * Returns the rule that the builder runs with. A builder that the user lists in
 	 * {@link #PROP_PROJECT_RULE_BUILDERS} gets its project in place of the
 	 * workspace root.
 	 */
 	private ISchedulingRule getEffectiveRule(InternalBuilder builder, ISchedulingRule rule) {
 		String builderIds = System.getProperty(PROP_PROJECT_RULE_BUILDERS);
+		if (!Objects.equals(builderIds, projectRuleBuildersSeen)) {
+			// a new list is a new decision of the user
+			projectRuleFailures.clear();
+			projectRuleBuildersSeen = builderIds;
+		}
+		if (!projectRuleFailures.isEmpty() && projectRuleFailures.contains(builder.getCommand().getBuilderName())) {
+			return rule;
+		}
 		if (rule == null || builderIds == null || builderIds.isBlank() || !rule.contains(workspace.getRoot())) {
 			return rule;
 		}

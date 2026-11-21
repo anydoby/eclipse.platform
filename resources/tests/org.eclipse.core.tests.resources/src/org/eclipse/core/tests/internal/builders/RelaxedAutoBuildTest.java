@@ -246,6 +246,50 @@ public class RelaxedAutoBuildTest {
 		job.join();
 	}
 
+	/**
+	 * A builder in the project-rule list that needs a larger rule fails once. Then
+	 * it gets its own rule again, and its next build is a full build.
+	 */
+	@Test
+	public void testProjectRuleBuilderThatNeedsRootFallsBack() throws Exception {
+		System.setProperty(PROP_PROJECT_RULE_BUILDERS, EmptyDeltaBuilder.BUILDER_NAME + ",fallback.test");
+		AtomicInteger builds = new AtomicInteger();
+		AtomicReference<ISchedulingRule> ruleInSecondBuild = new AtomicReference<>();
+		AtomicInteger secondBuildKind = new AtomicInteger();
+		EmptyDeltaBuilder.getInstance().setRuleCallback(new BuilderRuleCallback() {
+			@Override
+			public ISchedulingRule getRule(String name, IncrementalProjectBuilder projectBuilder, int trigger,
+					Map<String, String> args) {
+				return getWorkspace().getRoot();
+			}
+
+			@Override
+			public IProject[] build(int kind, Map<String, String> args, IProgressMonitor monitor) throws CoreException {
+				if (builds.incrementAndGet() == 1) {
+					// like a builder that refreshes something with the workspace root
+					getWorkspace().run(m -> {
+					}, getWorkspace().getRoot(), 0, null);
+				} else {
+					ruleInSecondBuild.set(Job.getJobManager().currentRule());
+					secondBuildKind.set(kind);
+				}
+				return super.build(kind, args, monitor);
+			}
+		});
+		try {
+			projectA.build(IncrementalProjectBuilder.FULL_BUILD, createTestMonitor());
+		} catch (CoreException expected) {
+			// the first build fails with the rule conflict
+		}
+		projectA.getFile("a.txt").create(new ByteArrayInputStream(new byte[0]), true, null);
+		projectA.build(IncrementalProjectBuilder.INCREMENTAL_BUILD, createTestMonitor());
+
+		assertThat(builds.get()).isEqualTo(2);
+		assertThat(ruleInSecondBuild.get()).as("the builder has its own rule again").isEqualTo(getWorkspace().getRoot());
+		assertThat(secondBuildKind.get()).as("the build after the failure is a full build")
+				.isEqualTo(IncrementalProjectBuilder.FULL_BUILD);
+	}
+
 	@Test
 	public void testOperationInSameProjectInterruptsBuilder() throws Exception {
 		AtomicInteger builds = new AtomicInteger();
