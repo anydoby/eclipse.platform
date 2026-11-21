@@ -598,16 +598,15 @@ public class Project extends Container implements IProject {
 				// With relaxed build rules the build holds no rule of its own: each builder
 				// takes its own rule while it runs.
 				final boolean relaxedBuildRules = noEnclosingRule && BuildManager.isRelaxedBuildEnabled();
-				if (relaxedBuildRules && builderName == null
-						&& !workspace.hasBuildWork(new IBuildConfiguration[] { config }, trigger, false)) {
-					// nothing to build: do not wait for the rules of other builds
-					return;
-				}
 				final ISchedulingRule buildRule = relaxedBuildRules ? null : projectBuildRule;
+				// With nothing to build, send the notifications without the workspace root,
+				// so that a build of an unchanged project does not wait for other builds.
+				final boolean noBuildWork = relaxedBuildRules && builderName == null
+						&& !workspace.hasBuildWork(new IBuildConfiguration[] { config }, trigger, false);
 
 				// PRE + POST_BUILD, and the build itself are allowed to modify resources, so require the current thread's scheduling rule
 				// to either contain the WR or be null. Therefore, if not null, ensure it contains the WR rule...
-				final ISchedulingRule notificationsRule = relaxed ? null : workspace.getRoot();
+				final ISchedulingRule notificationsRule = relaxed || noBuildWork ? null : workspace.getRoot();
 				SubMonitor subMonitor = SubMonitor.convert(innerMonitor, 100);
 				try {
 					try {

@@ -590,11 +590,9 @@ public class RelaxedSchedRuleBuilderTest {
 		tb1.waitForStatus(TestBarrier2.STATUS_DONE);
 		tb2.waitForStatus(TestBarrier2.STATUS_DONE);
 
-		// Test 4 - build project + null
+		// Test 4 - build project + null: each builder runs with its own rule
 		getRules[0] = buildRules[0] = project;
 		getRules[1] = buildRules[1] = null;
-		// TODO: Fixed in Bug 331187 ; BuildManager#getRule is pessimistic when there's a mixed resource and null rule
-		buildRules[0] = buildRules[1] = getWorkspace().getRoot();
 		tb1.setStatus(TestBarrier2.STATUS_START);
 		tb2.setStatus(TestBarrier2.STATUS_START);
 		j.schedule();
