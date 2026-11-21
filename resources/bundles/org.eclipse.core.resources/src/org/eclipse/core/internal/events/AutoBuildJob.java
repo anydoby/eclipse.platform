@@ -62,7 +62,7 @@ class AutoBuildJob extends Job implements IEclipsePreferences.IPreferenceChangeL
 	 * root only for the pre-build and post-build notifications, and each builder
 	 * runs with its own rule.
 	 */
-	private final boolean relaxed = BuildManager.isRelaxedAutoBuildEnabled();
+	private final boolean relaxed = BuildManager.isRelaxedBuildEnabled();
 
 	AutoBuildJob(Workspace workspace) {
 		super(Messages.events_building_0);

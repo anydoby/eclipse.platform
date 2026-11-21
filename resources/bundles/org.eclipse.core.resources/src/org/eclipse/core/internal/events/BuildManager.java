@@ -166,10 +166,13 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	protected final Set<InternalBuilder> currentBuilders;
 
 	/**
-	 * System property: {@code false} makes the auto-build hold the workspace root
-	 * for the whole build, as before.
+	 * System property: {@code false} makes builds hold the workspace root for their
+	 * whole run, as before. With the default {@code true}, the auto-build and the
+	 * builds started through {@code IWorkspace.build} and {@code IProject.build}
+	 * hold the root only for the PRE_BUILD and POST_BUILD notifications, and each
+	 * builder runs with its own rule.
 	 */
-	static final String PROP_RELAXED_AUTO_BUILD = "org.eclipse.core.resources.relaxedAutoBuild"; //$NON-NLS-1$
+	static final String PROP_RELAXED_BUILD_RULES = "org.eclipse.core.resources.relaxedBuildRules"; //$NON-NLS-1$
 
 	/**
 	 * System property: a comma-separated list of builder IDs. A builder in this list
@@ -1414,8 +1417,60 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	 * Returns whether the auto-build runs each builder with its own rule, and holds
 	 * the workspace root only for the pre-build and post-build notifications.
 	 */
-	static boolean isRelaxedAutoBuildEnabled() {
-		return !"false".equalsIgnoreCase(System.getProperty(PROP_RELAXED_AUTO_BUILD)); //$NON-NLS-1$
+	public static boolean isRelaxedBuildEnabled() {
+		return !"false".equalsIgnoreCase(System.getProperty(PROP_RELAXED_BUILD_RULES)); //$NON-NLS-1$
+	}
+
+	/**
+	 * Returns whether a build of the given configurations with the given trigger
+	 * would run at least one builder. The caller must hold the workspace lock.
+	 * Errors count as work, so that the real build reports them.
+	 */
+	public boolean hasBuildWork(IBuildConfiguration[] configs, int trigger) {
+		if (trigger != IncrementalProjectBuilder.INCREMENTAL_BUILD && trigger != IncrementalProjectBuilder.AUTO_BUILD) {
+			return configs.length > 0;
+		}
+		// freeze the current tree, so that the deltas computed here can be cached
+		ElementTree newTree = workspace.getElementTree();
+		if (!newTree.isImmutable()) {
+			workspace.newWorkingTree();
+		}
+		MultiStatus status = new MultiStatus(ResourcesPlugin.PI_RESOURCES, IResourceStatus.INTERNAL_ERROR, Messages.events_errors, null);
+		for (IBuildConfiguration config : configs) {
+			IProject project = config.getProject();
+			if (!project.isAccessible()) {
+				continue;
+			}
+			ProjectDescription description = ((Project) project).internalGetDescription();
+			ICommand[] commands = description == null ? null : description.getBuildSpec(false);
+			if (commands == null) {
+				continue;
+			}
+			BuildContext context = new BuildContext(config);
+			for (int i = 0; i < commands.length; i++) {
+				BuildCommand command = (BuildCommand) commands[i];
+				InternalBuilder builder;
+				try {
+					builder = getBuilder(config, command, i, status, context);
+				} catch (CoreException e) {
+					return true;
+				}
+				if (builder == null) {
+					continue;
+				}
+				if (builder.getLastBuiltTree() == null) {
+					// promoted to a full build, if the builder responds to it
+					if (command.isBuilding(trigger) || command.isBuilding(IncrementalProjectBuilder.FULL_BUILD)) {
+						return true;
+					}
+					continue;
+				}
+				if (command.isBuilding(trigger) && needsBuild(builder, trigger, newTree)) {
+					return true;
+				}
+			}
+		}
+		return !status.isOK();
 	}
 
 	/**
@@ -1474,6 +1529,10 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	 * changed.
 	 */
 	private boolean needsBuild(InternalBuilder builder, int trigger) {
+		return needsBuild(builder, trigger, workspace.getElementTree());
+	}
+
+	private boolean needsBuild(InternalBuilder builder, int trigger, ElementTree newTree) {
 		//on some triggers we build regardless of the delta
 		switch (trigger) {
 			case IncrementalProjectBuilder.CLEAN_BUILD :
@@ -1489,7 +1548,6 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 
 		//compute the delta since the last built state
 		ElementTree oldTree = builder.getLastBuiltTree();
-		ElementTree newTree = workspace.getElementTree();
 
 		//search for the builder's project
 		if (hasDelta(builder, builder.getProject(), oldTree, newTree)) {
