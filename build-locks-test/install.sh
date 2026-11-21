@@ -28,14 +28,18 @@ for b in org.eclipse.core.resources:3.24.100 org.eclipse.core.jobs:3.15.900; do
     exit 1
   fi
   jar="$ECL/$rel"; name=$(basename "$jar")
+  # Write a new file and rename it over the jar: a running Eclipse keeps
+  # reading the old file, and is not damaged.
+  tmp="$jar.new"
   if [ "$ACTION" = restore ]; then
-    cp "$BACKUP/$name" "$jar"; echo "Restored $name"; continue
+    cp "$BACKUP/$name" "$tmp" && mv -f "$tmp" "$jar"; echo "Restored $name"; continue
   fi
   mkdir -p "$BACKUP"
   [ -f "$BACKUP/$name" ] || cp "$jar" "$BACKUP/$name"
-  cp "$BACKUP/$name" "$jar"                    # always start from the original
-  zip -q -d "$jar" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' >/dev/null 2>&1 || true
-  (cd "$CLASSES/$id" && zip -q -r "$jar" .)
+  cp "$BACKUP/$name" "$tmp"                    # always start from the original
+  zip -q -d "$tmp" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' >/dev/null 2>&1 || true
+  (cd "$CLASSES/$id" && zip -q -r "$tmp" .)
+  mv -f "$tmp" "$jar"
   echo "Patched $name (original in $BACKUP)"
 done
 echo "Now start Eclipse once with -clean (or add -clean to the top of eclipse.ini for one start)."
