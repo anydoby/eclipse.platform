@@ -264,15 +264,4 @@ public abstract class InternalBuilder {
 	final boolean wasRememberStateRequested() {
 		return rememberStateRequested;
 	}
-
-	/**
-	 * Keeps the last built state although the builder did not ask for it. The platform calls this
-	 * when it stopped the builder itself, so that the changes the builder did not process reach the
-	 * next build.
-	 *
-	 * @see BuilderYieldEnforcer
-	 */
-	final void requestRememberState() {
-		rememberStateRequested = !forgetStateRequested;
-	}
 }
