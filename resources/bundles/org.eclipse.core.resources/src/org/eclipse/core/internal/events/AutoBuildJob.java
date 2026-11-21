@@ -19,6 +19,7 @@ import org.eclipse.core.internal.resources.ResourceException;
 import org.eclipse.core.internal.resources.Workspace;
 import org.eclipse.core.internal.utils.Messages;
 import org.eclipse.core.internal.utils.Policy;
+import org.eclipse.core.resources.IBuildConfiguration;
 import org.eclipse.core.resources.IResourceChangeEvent;
 import org.eclipse.core.resources.IncrementalProjectBuilder;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -56,10 +57,18 @@ class AutoBuildJob extends Job implements IEclipsePreferences.IPreferenceChangeL
 	private final Bundle systemBundle = Platform.getBundle("org.eclipse.osgi"); //$NON-NLS-1$
 	private final Workspace workspace;
 	final Job noBuildJob;
+	/**
+	 * {@code true} if this job has no rule of its own. It then holds the workspace
+	 * root only for the pre-build and post-build notifications, and each builder
+	 * runs with its own rule.
+	 */
+	private final boolean relaxed = BuildManager.isRelaxedAutoBuildEnabled();
 
 	AutoBuildJob(Workspace workspace) {
 		super(Messages.events_building_0);
-		setRule(workspace.getRoot());
+		if (!relaxed) {
+			setRule(workspace.getRoot());
+		}
 		setPriority(BUILD);
 		isAutoBuilding = workspace.isAutoBuilding();
 		this.workspace = workspace;
@@ -205,7 +214,12 @@ class AutoBuildJob extends Job implements IEclipsePreferences.IPreferenceChangeL
 			try {
 				// Note: shouldBuild() also resets the need/force/avoid build flags!
 				if (shouldBuild()) {
-					result = workspace.getBuildManager().build(workspace.getBuildOrder(), ICoreConstants.EMPTY_BUILD_CONFIG_ARRAY, trigger, subMonitor.split(Policy.opWork));
+					IBuildConfiguration[] buildOrder = workspace.getBuildOrder();
+					if (relaxed) {
+						result = buildRelaxed(buildOrder, trigger, rule, subMonitor.split(Policy.opWork));
+					} else {
+						result = workspace.getBuildManager().build(buildOrder, ICoreConstants.EMPTY_BUILD_CONFIG_ARRAY, trigger, subMonitor.split(Policy.opWork));
+					}
 				}
 			} finally {
 				//always send POST_BUILD if there has been a PRE_BUILD
@@ -221,6 +235,33 @@ class AutoBuildJob extends Job implements IEclipsePreferences.IPreferenceChangeL
 				workspace.newWorkingTree();
 			}
 			workspace.endOperation(rule, false);
+		}
+	}
+
+	/**
+	 * Runs the builders without the workspace root. The caller holds the root on
+	 * entry (for PRE_BUILD), and holds it again on exit (for POST_BUILD). In between,
+	 * each builder holds only its own rule, so operations that do not conflict with
+	 * it can run.
+	 */
+	private IStatus buildRelaxed(IBuildConfiguration[] buildOrder, int trigger, ISchedulingRule rule, IProgressMonitor monitor) throws CoreException {
+		BuildManager buildManager = workspace.getBuildManager();
+		workspace.endOperation(rule, false);
+		try {
+			workspace.prepareOperation(null, null);
+			workspace.beginOperation(false);
+			buildManager.setRelaxedAutoBuild(true);
+			try {
+				return buildManager.build(buildOrder, ICoreConstants.EMPTY_BUILD_CONFIG_ARRAY, trigger, monitor);
+			} finally {
+				buildManager.setRelaxedAutoBuild(false);
+				workspace.endOperation(null, false);
+			}
+		} finally {
+			// Take the root again for POST_BUILD. Do not use the monitor: a cancel
+			// must not make this fail, because POST_BUILD must always follow PRE_BUILD.
+			workspace.prepareOperation(rule, null);
+			workspace.beginOperation(false);
 		}
 	}
 

@@ -2444,7 +2444,7 @@ public class Workspace extends PlatformObject implements IWorkspace, ICoreConsta
 	public void prepareOperation(ISchedulingRule rule, IProgressMonitor monitor) throws CoreException {
 		try {
 			//make sure autobuild is not running if it conflicts with this operation
-			ISchedulingRule buildRule = getRuleFactory().buildRule();
+			ISchedulingRule buildRule = buildManager.getAutoBuildInterruptRule(getRuleFactory().buildRule());
 			if (rule != null && buildRule != null && (rule.isConflicting(buildRule) || buildRule.isConflicting(rule))) {
 				buildManager.interrupt();
 			}
