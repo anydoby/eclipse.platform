@@ -15,11 +15,16 @@ Do not merge. This folder is only for a test on Eclipse 4.41.
 
 ## Install
 
-1. Close Eclipse.
-2. Run: `sh install.sh <eclipse dir>`.
+1. Download the two files into one folder:
+
+       curl -LO https://github.com/anydoby/eclipse.platform/raw/build-locks-4.41/build-locks-test/install.sh
+       curl -LO https://github.com/anydoby/eclipse.platform/raw/build-locks-4.41/build-locks-test/classes.zip
+
+2. Close Eclipse.
+3. Run: `sh install.sh <eclipse dir>`.
    `<eclipse dir>` is the folder with `plugins/` and `eclipse.ini`.
    On macOS: `/Applications/Eclipse.app/Contents/Eclipse`.
-3. Start Eclipse once with `-clean`.
+4. Start Eclipse once with `-clean`.
 
 To undo: `sh install.sh <eclipse dir> restore`, then start once with `-clean`.
 

@@ -14,6 +14,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 BACKUP="$HOME/eclipse-build-locks-backup"
 INFO="$ECL/configuration/org.eclipse.equinox.simpleconfigurator/bundles.info"
 [ -d "$ECL/plugins" ] || { echo "No plugins folder in $ECL"; exit 1; }
+CLASSES=$(mktemp -d)
+trap 'rm -rf "$CLASSES"' EXIT
+unzip -q "$HERE/classes.zip" -d "$CLASSES"
 
 for b in org.eclipse.core.resources:3.24.100 org.eclipse.core.jobs:3.15.900; do
   id=${b%%:*}; ver=${b##*:}
@@ -32,7 +35,7 @@ for b in org.eclipse.core.resources:3.24.100 org.eclipse.core.jobs:3.15.900; do
   [ -f "$BACKUP/$name" ] || cp "$jar" "$BACKUP/$name"
   cp "$BACKUP/$name" "$jar"                    # always start from the original
   zip -q -d "$jar" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' >/dev/null 2>&1 || true
-  (cd "$HERE/classes/$id" && zip -q -r "$jar" .)
+  (cd "$CLASSES/$id" && zip -q -r "$jar" .)
   echo "Patched $name (original in $BACKUP)"
 done
 echo "Now start Eclipse once with -clean (or add -clean to the top of eclipse.ini for one start)."
