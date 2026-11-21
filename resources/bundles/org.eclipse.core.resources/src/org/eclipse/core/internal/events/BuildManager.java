@@ -1444,7 +1444,8 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 	/**
 	 * Returns whether a build of the given configurations with the given trigger
 	 * would run at least one builder. The caller must hold the workspace lock.
-	 * Errors count as work, so that the real build reports them.
+	 * This creates no builder: a builder that does not exist yet counts as work,
+	 * so that the real build creates it and reports its errors.
 	 */
 	public boolean hasBuildWork(IBuildConfiguration[] configs, int trigger) {
 		if (trigger != IncrementalProjectBuilder.INCREMENTAL_BUILD && trigger != IncrementalProjectBuilder.AUTO_BUILD) {
@@ -1455,7 +1456,6 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 		if (!newTree.isImmutable()) {
 			workspace.newWorkingTree();
 		}
-		MultiStatus status = new MultiStatus(ResourcesPlugin.PI_RESOURCES, IResourceStatus.INTERNAL_ERROR, Messages.events_errors, null);
 		for (IBuildConfiguration config : configs) {
 			IProject project = config.getProject();
 			if (!project.isAccessible()) {
@@ -1466,17 +1466,12 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 			if (commands == null) {
 				continue;
 			}
-			BuildContext context = new BuildContext(config);
-			for (int i = 0; i < commands.length; i++) {
-				BuildCommand command = (BuildCommand) commands[i];
-				InternalBuilder builder;
-				try {
-					builder = getBuilder(config, command, i, status, context);
-				} catch (CoreException e) {
-					return true;
-				}
+			for (ICommand c : commands) {
+				BuildCommand command = (BuildCommand) c;
+				InternalBuilder builder = command.getBuilder(config);
 				if (builder == null) {
-					continue;
+					// not created yet
+					return true;
 				}
 				if (builder.getLastBuiltTree() == null) {
 					// promoted to a full build, if the builder responds to it
@@ -1490,7 +1485,7 @@ public class BuildManager implements ICoreConstants, IManager, ILifecycleListene
 				}
 			}
 		}
-		return !status.isOK();
+		return false;
 	}
 
 	/**

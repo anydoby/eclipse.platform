@@ -525,14 +525,12 @@ public class Workspace extends PlatformObject implements IWorkspace, ICoreConsta
 		// With relaxed build rules each builder holds only its own rule, also when
 		// another builder of the build needs the workspace root.
 		final boolean relaxedBuildRules = noEnclosingRule && BuildManager.isRelaxedBuildEnabled();
-		if (relaxedBuildRules && !hasBuildWork(requestedConfigs, trigger, buildReferences)) {
-			// Nothing to build: do not take the workspace root for the notifications,
-			// so that a build of unchanged projects does not wait for other builds.
-			return;
-		}
-		boolean relaxed = relaxedBuildRules
-				|| (noEnclosingRule && requestedConfigs.length > 0 && allRelaxed(requestedConfigs, trigger));
-		final ISchedulingRule notificationRule = getRuleFactory().buildRule();
+		boolean relaxed = noEnclosingRule && requestedConfigs.length > 0 && allRelaxed(requestedConfigs, trigger);
+		relaxed |= relaxedBuildRules;
+		// With nothing to build, send the notifications without the workspace root,
+		// so that a build of unchanged projects does not wait for other builds.
+		final ISchedulingRule notificationRule = relaxedBuildRules
+				&& !hasBuildWork(requestedConfigs, trigger, buildReferences) ? null : getRuleFactory().buildRule();
 		ISchedulingRule currentRule = null;
 		boolean buildParallel = noEnclosingRule && getDescription().getMaxConcurrentBuilds() > 1 && getDescription().getBuildOrder() == null;
 		SubMonitor subMonitor = SubMonitor.convert(monitor, 100);
