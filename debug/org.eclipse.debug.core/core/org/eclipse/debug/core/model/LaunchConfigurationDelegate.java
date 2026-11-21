@@ -36,6 +36,7 @@ import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.SubMonitor;
+import org.eclipse.core.runtime.jobs.ISchedulingRule;
 import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.IBreakpointManager;
 import org.eclipse.debug.core.ILaunch;
@@ -418,6 +419,11 @@ public abstract class LaunchConfigurationDelegate implements ILaunchConfiguratio
 				localmonitor.done();
 			}
 		};
-		ResourcesPlugin.getWorkspace().run(build, monitor);
+		// The builds take the rules that they need. With the workspace root as rule,
+		// the launch would wait for every running build, also of unrelated projects.
+		ISchedulingRule rule = "false".equalsIgnoreCase(System.getProperty("org.eclipse.core.resources.relaxedBuildRules")) //$NON-NLS-1$ //$NON-NLS-2$
+				? ResourcesPlugin.getWorkspace().getRoot()
+				: null;
+		ResourcesPlugin.getWorkspace().run(build, rule, IWorkspace.AVOID_UPDATE, monitor);
 	}
 }
