@@ -293,3 +293,26 @@ Known gaps:
 - Two overlapping builds still share `builtProjects`, `rebuildRequested` and `projectsToRebuild`
   in `BuildManager`. The deltas are safe now; the rebuild requests of one build can affect the other.
 - A builder in `projectRuleBuilders` that writes outside its project fails with a rule error.
+
+## 5. Status (2026-11-21, evening)
+
+The user's case: Project > Clean of a project with a 20 s Maven step blocked every other
+project, and a launch (Ctrl+F11) of an unrelated Rust project waited for the build. Fixed locally
+(measured: the launch job ends 0.3 s after Ctrl+F11 while the Maven step runs). Changes:
+
+| Where | Change |
+|---|---|
+| core.resources | manual builds (`Workspace.build`, `Project.build`) use per-builder rules too; a build with nothing to build sends PRE/POST_BUILD without the root; kill switch renamed `org.eclipse.core.resources.relaxedBuildRules` |
+| core.resources | a builder in `projectRuleBuilders` that needs a larger rule falls back to its own rule (warning in the log, full build next time) |
+| debug.core | `LaunchConfigurationDelegate.buildProjects` runs without the root rule |
+| debug.ui | "wait for ongoing build" waits only for the rule of the projects that the configuration maps |
+| ui.ide (eclipse.platform.ui, branch `clean-without-workspace-lock`) | the Clean job has no job rule |
+| m2e (branch `project-build-rule`) | `MavenBuilder.getRule` = project unless the facade is missing/stale or the pom changed; `refresh()` calls `endRule` also when `beginRule` fails |
+| Corrosion (branch `launch-build-scope`) | launch configurations map their project; run/test delegates build only their project |
+
+Tests: RelaxedAutoBuildTest (9), RelaxedSchedRuleBuilderTest case 4 updated (bug 331187),
+full core.tests.resources 1573 pass; m2e MavenBuilderRuleTest (3).
+
+Known gaps: overlapping builds still share `builtProjects`/`rebuildRequested`; launch
+configurations without mapped resources still wait for all builds; Corrosion configurations get
+the mapping only when they are saved again.
