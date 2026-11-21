@@ -30,6 +30,8 @@ import javax.xml.parsers.ParserConfigurationException;
 
 import org.eclipse.core.expressions.EvaluationContext;
 import org.eclipse.core.expressions.IEvaluationContext;
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ISaveContext;
 import org.eclipse.core.resources.ISaveParticipant;
 import org.eclipse.core.resources.IncrementalProjectBuilder;
@@ -40,13 +42,16 @@ import org.eclipse.core.runtime.IConfigurationElement;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.SubMonitor;
 import org.eclipse.core.runtime.jobs.IJobChangeEvent;
 import org.eclipse.core.runtime.jobs.IJobChangeListener;
 import org.eclipse.core.runtime.jobs.IJobManager;
+import org.eclipse.core.runtime.jobs.ISchedulingRule;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.jobs.MultiRule;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.debug.core.DebugException;
@@ -1061,6 +1066,63 @@ public class DebugUIPlugin extends AbstractUIPlugin implements ILaunchListener, 
 	 * @param mode launch mode
 	 * @since 3.0
 	 */
+	/**
+	 * Waits for the builds that a launch of the given configuration depends on.
+	 * <p>
+	 * When the configuration maps resources in projects, this waits only until no
+	 * build holds a scheduling rule that conflicts with these projects. A build of
+	 * an unrelated project then does not delay the launch. Otherwise, or when the
+	 * system property {@code org.eclipse.core.resources.relaxedBuildRules} is
+	 * {@code false}, this waits for all manual builds and the auto-build.
+	 * </p>
+	 */
+	static void waitForBuilds(ILaunchConfiguration configuration, IProgressMonitor monitor) throws InterruptedException {
+		IJobManager jobManager = Job.getJobManager();
+		SubMonitor subMonitor = SubMonitor.convert(monitor, 2);
+		ISchedulingRule rule = getProjectsRule(configuration);
+		if (rule != null && jobManager.currentRule() == null) {
+			try {
+				jobManager.beginRule(rule, subMonitor.split(2));
+			} catch (OperationCanceledException e) {
+				// the caller checks the monitor
+			} finally {
+				jobManager.endRule(rule);
+			}
+			return;
+		}
+		jobManager.join(ResourcesPlugin.FAMILY_MANUAL_BUILD, subMonitor.split(1));
+		jobManager.join(ResourcesPlugin.FAMILY_AUTO_BUILD, subMonitor.split(1));
+	}
+
+	/**
+	 * Returns a rule for the projects of the resources that the configuration maps,
+	 * or {@code null} if the launch must wait for all builds.
+	 */
+	private static ISchedulingRule getProjectsRule(ILaunchConfiguration configuration) {
+		if ("false".equalsIgnoreCase(System.getProperty("org.eclipse.core.resources.relaxedBuildRules"))) { //$NON-NLS-1$ //$NON-NLS-2$
+			return null;
+		}
+		IResource[] resources;
+		try {
+			resources = configuration.getMappedResources();
+		} catch (CoreException e) {
+			return null;
+		}
+		if (resources == null || resources.length == 0) {
+			return null;
+		}
+		Set<IProject> projects = new LinkedHashSet<>();
+		for (IResource resource : resources) {
+			IProject project = resource.getProject();
+			if (project == null) {
+				// the workspace root: wait for everything
+				return null;
+			}
+			projects.add(project);
+		}
+		return MultiRule.combine(projects.toArray(new ISchedulingRule[projects.size()]));
+	}
+
 	public static void launchInForeground(final ILaunchConfiguration configuration, final String mode) {
 		final IJobManager jobManager = Job.getJobManager();
 		IPreferenceStore store = DebugUIPlugin.getDefault().getPreferenceStore();
@@ -1100,8 +1162,7 @@ public class DebugUIPlugin extends AbstractUIPlugin implements ILaunchListener, 
 				final SubMonitor subMonitor = SubMonitor.convert(monitor, MessageFormat
 						.format(DebugUIMessages.DebugUIPlugin_25, configuration.getName()), 100);
 				try {
-					jobManager.join(ResourcesPlugin.FAMILY_MANUAL_BUILD, subMonitor.split(1));
-					jobManager.join(ResourcesPlugin.FAMILY_AUTO_BUILD, subMonitor.split(1));
+					waitForBuilds(configuration, subMonitor.split(2));
 				} catch (InterruptedException e1) {
 					/* continue */
 				}
@@ -1242,8 +1303,7 @@ public class DebugUIPlugin extends AbstractUIPlugin implements ILaunchListener, 
 						};
 						addJobChangeListener(listener);
 						try {
-							jobManager.join(ResourcesPlugin.FAMILY_MANUAL_BUILD, subMonitor.split(1));
-							jobManager.join(ResourcesPlugin.FAMILY_AUTO_BUILD, subMonitor.split(1));
+							waitForBuilds(configuration, subMonitor.split(2));
 						}
 						catch (InterruptedException e) {/*just continue.*/}
 						DebugPlugin.getDefault().getLaunchManager().removeLaunch(pendingLaunch);
